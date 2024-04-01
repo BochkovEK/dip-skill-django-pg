@@ -1,0 +1,54 @@
+# Create docker registry secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: regcred
+data:
+  .dockerconfigjson: REGISTRY_AUTH
+type: kubernetes.io/dockerconfigjson
+---
+
+# Deploy Deployment APP
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: django-app
+  template:
+    metadata:
+      labels:
+        app: django-app
+    spec:
+      containers:
+        - name: django-app
+          image: __VERSION__
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          env:
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DB_PASS
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+          command: [ "/bin/sh" ]
+          args: [ "-c", "python3 manage.py migrate && python3 manage.py runserver 0.0.0.0:8081" ]
+      imagePullSecrets:
+        - name: regcred
+

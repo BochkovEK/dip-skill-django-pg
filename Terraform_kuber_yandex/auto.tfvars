@@ -1,0 +1,7 @@
+service_account_name  = "admin-lb-kuber"
+zone_name             = "ru-central1-a"
+folder_id             = ""
+cloud_id              = ""
+vm_user               = "test_user"
+ssh_key_path          = "id_rsa.pub"
+k8s_version           = "1.26"

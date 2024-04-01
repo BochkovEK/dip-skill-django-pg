@@ -1,0 +1,144 @@
+variables:
+  BUILD:
+    value: "false"
+    description: "Will the build stage be started"
+  DEPLOY_PG:
+    value: "false"
+    description: "Will the deploy pg stage be started"
+  CLEAN_UP_DB:
+    value: "false"
+    description: "Сleaning DB will be performed"
+  DEPLOY_APP:
+    value: "false"
+    description: "Will the deploy app stage be started"
+  CLEAN_UP_APP:
+    value: "false"
+    description: "Сleaning APP will be performed"
+  DEPLOY_LB_DJANGO:
+    value: "false"
+    description: "Will the deploy load balancer stage be started"
+  PV_NAME: "postgres-volume"
+  PVC_NAME: "postgres-volume-claim"
+  K8S_PG_YAML_INIT: "k8s_PG.yaml"
+  K8S_PG_YAML: "/tmp/${K8S_PG_YAML_INIT}"
+  K8S_APP_YAML_INIT: "k8s_app.yaml"
+  K8S_APP_YAML: "/tmp/$K8S_APP_YAML_INIT"
+
+stages:
+  - build
+  - deploy-pg
+  - deploy-app
+  - deploy-lb-django
+
+build:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "Check variables..."
+    - for var in ${PG_PASSWORD} ${CI_REGISTRY} ${CI_REGISTRY_USER} ${CI_REGISTRY_PASSWORD}; do echo $var || exit 1; done
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n' )\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}/django_pg_app/"
+      --dockerfile "Dockerfile"
+      --destination "${CI_REGISTRY}/${CI_PROJECT_PATH}:1.0"
+  rules:
+    - if: $BUILD != "false"
+
+deploy-pg:
+  image: bitnami/kubectl:latest
+  stage: deploy-pg
+  script:
+    - kubectl config use-context ${CI_PROJECT_PATH}:gla
+    - | # Cleanup
+      if [ ! "${CLEAN_UP_DB}" = false ]; then
+        echo "Cleanup..."
+        echo "Get services, and cleanup it..."
+        kubectl get services --all-namespaces | grep postgres && kubectl delete services postgres
+        echo "Get deployment, and cleanup it..."
+        kubectl get deployment --all-namespaces | grep postgres && kubectl delete deployment postgres
+
+        echo "Get pvc, and cleanup it..."
+        kubectl get pvc | grep postgres && kubectl delete pvc $PVC_NAME
+
+        echo "Get pv, and cleanup it..."
+        kubectl get pv | grep postgres && kubectl delete pv $PV_NAME
+        echo "Podes list after Cleanup:"
+        kubectl get pods -o wide
+      fi
+    - echo "Pods list before PG deploy"
+    - kubectl get pods -o wide
+    - echo "Check variables"
+    - | # Check require variables list
+      i=1
+      for var in ${PG_PASSWORD} ${CI_REGISTRY} ${CI_REGISTRY_USER} ${CI_REGISTRY_PASSWORD}; do
+        if [ -z "$var" ]; then
+          echo "Variable $ith is does not exist in \${PG_PASSWORD} \${CI_REGISTRY} \${CI_REGISTRY_USER} \${CI_REGISTRY_PASSWORD}"
+          exit 1
+        fi
+      done
+    - cat $K8S_PG_YAML_INIT | sed -e s#PG_PASSWORD#${PG_PASSWORD}# | tee ${K8S_PG_YAML}
+    - kubectl apply -f ${K8S_PG_YAML}
+    - echo "${PV_NAME} describe:"
+    - kubectl describe pv ${PV_NAME}
+    - echo "pvc describe:"
+    - kubectl describe pvc $PVC_NAME
+    - sleep 5
+    - kubectl get pods -o wide
+    - kubectl rollout status deployment/postgres --timeout=90s
+  rules:
+    - if: $DEPLOY_PG != "false"
+
+deploy-app:
+  image: bitnami/kubectl:latest
+  stage: deploy-app
+  before_script:
+    - REGISTRY_CREDS=$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64 -w 0)
+    - CONF_JSON=$(echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"${REGISTRY_CREDS}\"}}}")
+    - CONF_JSON_BASE64=$(echo -n $CONF_JSON|base64 -w 0)
+  script:
+    - kubectl config use-context ${CI_PROJECT_PATH}:gla
+    - kubectl get pods -o wide
+    - | # Cleanup
+      if [ ! "${CLEAN_UP_APP}" = false ]; then
+        echo "Cleanup..."
+        kubectl get deployments --all-namespaces | grep django-app && kubectl delete deployment django-app
+        echo "Podes list after Cleanup:"
+        kubectl get pods -o wide
+      fi
+    - echo "Check postgres deployment..."
+    - kubectl rollout status deployment/postgres --timeout=90s
+    - echo "Check variables"
+    - | # Test multiline yaml support
+      if [ -z "${CONF_JSON_BASE64}" ]; then
+        echo "Variable CONF_JSON_BASE64 is not define"
+        exit 1
+      else
+        echo ${CONF_JSON_BASE64}
+      fi
+    - cat $K8S_APP_YAML_INIT | sed -e s#PG_PASSWORD#${PG_PASSWORD}#
+          -e s#__VERSION__#${CI_REGISTRY}/${CI_PROJECT_PATH}:1.0#
+          -e s#REGISTRY_AUTH#"$CONF_JSON_BASE64"#
+        | tee ${K8S_APP_YAML}
+    - kubectl apply -f ${K8S_APP_YAML}
+    - kubectl rollout status deployment/django-app --timeout=90s
+    - sleep 5
+    - kubectl get pods -o wide
+  rules:
+    - if: $DEPLOY_APP != "false"
+
+deploy-lb-django:
+  image: bitnami/kubectl:latest
+  stage: deploy-lb-django
+  script:
+    - kubectl config use-context ${CI_PROJECT_PATH}:gla
+    - kubectl apply -f k8s_lb_django.yaml
+    - sleep 3
+    - kubectl get service
+    - echo "!!! Check public IP in column EXTERNAL-IP:"
+    - kubectl get svc loadbalancer-django
+  rules:
+    - if: $DEPLOY_LB_DJANGO != "false"
