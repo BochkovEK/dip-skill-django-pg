@@ -7,6 +7,6 @@ spec:
     app: django-app # Deployment App name
   ports:
     - protocol: TCP
-      port: 8081
-      targetPort: 8081
+      port: {{ .Values.django_app.service.port }}
+      targetPort: {{ .Values.django_app.service.port }}
   type: LoadBalancer

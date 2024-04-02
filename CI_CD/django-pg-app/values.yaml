@@ -1,0 +1,16 @@
+django_app:
+  image: __VERSION__
+  replicas: 1
+  service:
+    port: 8081
+  secret:
+    registry_auth: REGISTRY_AUTH
+
+postgres:
+  pg_db_name: db_name
+  pg_user: user
+  pg_password: PG_PASSWORD
+  pv_path: /data/postgresql
+  pvc_name: postgres-volume-claim
+
+
