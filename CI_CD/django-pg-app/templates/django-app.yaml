@@ -1,0 +1,50 @@
+# Deploy Deployment APP
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-app
+spec:
+  replicas: {{ .Values.django_app.replicas }}
+  selector:
+    matchLabels:
+      app: django-app
+  template:
+    metadata:
+      labels:
+        app: django-app
+    spec:
+      initContainers:
+        - name: check-db-ready
+          image: postgres:9.6.5
+          command: [ 'sh', '-c',
+            'until pg_isready -h postgres -p 5432; 
+                do if [[ $i -eq 12 ]]; then echo "DB still not ready"; exit 1; else echo waiting for database; sleep 10; let i++; fi; done' ]
+      containers:
+        - name: django-app
+          image: {{ .Values.django_app.image }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.django_app.service.port }}
+          env:
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DB_PASS
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+          command: [ "/bin/sh" ]
+          args: [ "-c", "python3 manage.py migrate && python3 manage.py runserver 0.0.0.0:{{ .Values.django_app.service.port }}" ]
+      imagePullSecrets:
+        - name: regcred
+

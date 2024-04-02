@@ -1,0 +1,8 @@
+apiVersion: v2
+name: django-pg-app
+description: "helm chart for Kubernetes"
+type: application
+#chart version
+version: 1.0.0
+#version number of application
+appVersion: 1.0.0
